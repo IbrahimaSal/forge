@@ -10,7 +10,7 @@
 
 **Changement v0.3** : pivot d'architecture — Phase 1 = CLI/TUI (fork de `extensions/cli` + `core/`), Phase 2 (différée) = extension VS Code. Décision motivée par l'investigation du 2026-09-01 : `extensions/cli` réutilise déjà le moteur `multiEdit` de `core/` sans aucune dépendance à `ApplyManager`/`extensions/vscode/`, éliminant structurellement la source de fragilité identifiée plutôt que de la contourner.
 
-**Changement v0.4** : ajout REQ-EDIT-100/110 (permissions `Read`/`Edit`/`MultiEdit` en `allow` par défaut, restreint au repo courant) et désignation comme **toute première livraison**, avant le reste du domaine EDIT.
+**Changement v0.4** : ajout REQ-EDIT-100/101/102/110 (permissions `Read`/`Edit`/`MultiEdit` + liste blanche de commandes shell en lecture seule — `git status`/`show`/`log`/`diff`, `ls`, `cat`, etc. — en `allow` par défaut, restreint au repo courant, fail-safe sur ambiguïté) et désignation comme **toute première livraison**, avant le reste du domaine EDIT.
 
 Convention de mots-clés (RFC 2119) : **DOIT/SHALL** = exigence obligatoire ; **DEVRAIT/SHOULD** = recommandé, dérogation justifiable ; **PEUT/MAY** = optionnel.
 
@@ -110,8 +110,12 @@ Contexte historique : dans la version VS Code de Continue, le mécanisme « chat
 | REQ-EDIT-080 | Le système NE DOIT PAS s'appuyer sur du matching approximatif (fuzzy, ex. Jaro-Winkler) pour `multiEdit`. La fiabilité DOIT reposer sur la fraîcheur du contexte (REQ-EDIT-081) plutôt que sur la tolérance de l'algorithme de recherche — principe aligné sur l'outil Edit de Claude Code (matching strict, discipline de lecture). | Haute |
 | REQ-EDIT-081 | Le système DOIT rejeter tout appel `multiEdit` portant sur un fichier qui n'a pas été lu (via l'outil de lecture) au moins une fois dans la session en cours, avec un message demandant explicitement de relire le fichier avant de réessayer. | Haute |
 | REQ-EDIT-090 | *(Sans objet en Phase 1 — le CLI est nativement agentique, il n'existe pas de "chat libre sans outils" distinct. Le contrôle de ce que le modèle peut faire passe par `src/permissions/` du CLI, hors périmètre de cette exigence. Reporté à la Phase 2 si un mode chat séparé y est introduit.)* | — |
+Portée de la notion « lecture » vs « écriture » (précisée le 2026-09-04) : **lecture** = tout ce qui n'altère rien — l'outil `Read`, et les commandes shell en lecture seule (`git status`, `git show`, `git log`, `git diff`, `ls`, `cat`, `pwd`, `find`, `grep`/`rg`, etc.). **Écriture** = tout ce qui modifie un état — `Edit`/`MultiEdit`/`Write`, et les commandes shell mutantes (`git commit`, `git push`, `git merge`, `git rebase`, `git reset`, `rm`, `mv`, installation de paquets, etc.), qui restent `ask`.
+
 | REQ-EDIT-100 | **PREMIÈRE LIVRAISON.** Les outils `Read`, `Edit` et `MultiEdit` DOIVENT avoir la politique de permission `allow` par défaut dans `extensions/cli/src/permissions/defaultPolicies.ts` (ou configuration équivalente) — zéro prompt de confirmation pour la lecture et l'édition de fichiers. `Read` l'est déjà en amont ; `Edit`/`MultiEdit` valent `ask` par défaut et DOIVENT être basculés. | Haute |
-| REQ-EDIT-110 | **PREMIÈRE LIVRAISON.** L'`allow` automatique de REQ-EDIT-100 DEVRAIT être restreint aux chemins situés sous la racine du repo/répertoire de travail courant ; toute opération `Edit`/`MultiEdit`/`Read` visant un chemin hors de ce périmètre DOIT repasser en `ask`. Nécessite une évaluation de policy sensible aux arguments (chemin de fichier), fonctionnalité listée comme "partiellement implémentée" en amont (`extensions/cli/src/permissions/README.md`) — à compléter. | Haute |
+| REQ-EDIT-101 | **PREMIÈRE LIVRAISON.** Le système DOIT maintenir une liste blanche de sous-commandes shell en lecture seule (au minimum : `git status`, `git show`, `git log`, `git diff`, `git branch`, `ls`, `cat`, `pwd`, `find`, `grep`, `rg`) auto-autorisées via le mécanisme de policy par motif (`Bash(git status*)`, etc.) déjà supporté par `permissionChecker.ts` (`matchesToolPattern`). Toute commande shell hors de cette liste blanche NE DOIT PAS être auto-autorisée et DOIT rester `ask`, en repassant systématiquement par `evaluateTerminalCommandSecurity`. | Haute |
+| REQ-EDIT-102 | La liste blanche de REQ-EDIT-101 DOIT rester conservative (fail-safe) : en cas d'ambiguïté sur le caractère mutant d'une commande (alias shell/git personnalisé, substitution de commande, redirection, chaînage `&&`/`;`/`\|`), le système DOIT retomber sur `ask` plutôt que `allow`. | Haute |
+| REQ-EDIT-110 | **PREMIÈRE LIVRAISON.** L'`allow` automatique de REQ-EDIT-100/101 DEVRAIT être restreint au repo/répertoire de travail courant : pour `Edit`/`MultiEdit`/`Read`, aux chemins situés sous sa racine ; pour les commandes shell de REQ-EDIT-101, aux invocations qui n'opèrent pas explicitement sur un autre dépôt (ex. `git -C <autre-chemin>`, `git --git-dir=...`). Toute opération hors de ce périmètre DOIT repasser en `ask`. Nécessite une évaluation de policy sensible aux arguments, fonctionnalité listée comme "partiellement implémentée" en amont (`extensions/cli/src/permissions/README.md`) — à compléter. | Haute |
 
 #### 3.2.2 Domaine SKILL — Skills réutilisables
 
@@ -168,7 +172,8 @@ Contexte : `extensions/cli` n'a plus de flux de login navigateur — le hub/Work
 |---|---|---|
 | REQ-EDIT-010, 020 | Revue de code : `multiEdit`/`edit` restent les seuls chemins d'écriture de fichier déclenchables par le modèle | Non vérifié |
 | REQ-EDIT-100 | Test manuel : session TUI, appel `Read`/`Edit`/`MultiEdit` sur un fichier du repo → aucun prompt de confirmation affiché | Non vérifié |
-| REQ-EDIT-110 | Test d'intégration : appel `Edit`/`MultiEdit`/`Read` sur un chemin hors du repo courant (ex. `/tmp/x` ou `~/.ssh/`) → prompt `ask` déclenché | Non vérifié |
+| REQ-EDIT-101, 102 | Test d'intégration : `git status`/`git show`/`git log`/`git diff` → aucun prompt ; `git commit`/`rm`/commande hors liste blanche → `ask` déclenché ; commande ambiguë (alias, substitution) → `ask` déclenché | Non vérifié |
+| REQ-EDIT-110 | Test d'intégration : appel `Edit`/`MultiEdit`/`Read`/commande shell lecture-seule sur un chemin ou dépôt hors du répertoire de travail courant (ex. `/tmp/x`, `~/.ssh/`, `git -C /autre/repo status`) → prompt `ask` déclenché | Non vérifié |
 | REQ-EDIT-050, 060, 070 | Test d'intégration : injection d'un `old_string` inexistant, vérification du message renvoyé au modèle et à l'utilisateur | Non vérifié |
 | REQ-EDIT-080, 081 | Test d'intégration : appel `multiEdit` sur un fichier non lu dans la session → rejet attendu ; absence de tout chemin de code utilisant une correspondance approximative | Non vérifié |
 | REQ-NFR-060 | Test automatisé répété 20x sur fichier de test dédié | Non vérifié |
@@ -208,7 +213,7 @@ Domaines EDIT, SKILL, WKF : aucun blocant, peuvent démarrer immédiatement.
 
 ## 6. Ordre de livraison proposé
 
-0. **Première livraison — REQ-EDIT-100 / REQ-EDIT-110** : bascule `Edit`/`MultiEdit` en `allow` par défaut, restreint aux chemins du repo courant. Changement isolé, à fort impact perçu immédiat, indépendant du reste du domaine EDIT. Prêt à démarrer en tout premier.
+0. **Première livraison — REQ-EDIT-100/101/102/110** : bascule `Edit`/`MultiEdit` en `allow` par défaut + liste blanche de commandes shell lecture-seule, le tout restreint au repo courant. Changement isolé, à fort impact perçu immédiat, indépendant du reste du domaine EDIT. Prêt à démarrer en tout premier.
 1. Reste du domaine EDIT (REQ-EDIT-010 à 081) — impact utilisateur immédiat, débloque la confiance dans l'outil. Prêt à démarrer.
 2. Domaine SKILL — activation quasi gratuite de l'existant. Prêt à démarrer.
 3. Domaine WKF — le plus structurant. Prêt à démarrer.
