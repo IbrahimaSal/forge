@@ -4,13 +4,15 @@
 | | |
 |---|---|
 | **Document** | SRS-IA4DEV-CODE-001 |
-| **Version** | 0.4 (draft) |
+| **Version** | 0.5 (draft) |
 | **Statut** | Brouillon — aucune implémentation ne démarre avant approbation |
 | **Norme de référence** | ISO/IEC/IEEE 29148:2018 (succède à IEEE 830-1998) |
 
 **Changement v0.3** : pivot d'architecture — Phase 1 = CLI/TUI (fork de `extensions/cli` + `core/`), Phase 2 (différée) = extension VS Code. Décision motivée par l'investigation du 2026-09-01 : `extensions/cli` réutilise déjà le moteur `multiEdit` de `core/` sans aucune dépendance à `ApplyManager`/`extensions/vscode/`, éliminant structurellement la source de fragilité identifiée plutôt que de la contourner.
 
 **Changement v0.4** : ajout REQ-EDIT-100/101/102/110 (permissions `Read`/`Edit`/`MultiEdit` + liste blanche de commandes shell en lecture seule — `git status`/`show`/`log`/`diff`, `ls`, `cat`, etc. — en `allow` par défaut, restreint au repo courant, fail-safe sur ambiguïté) et désignation comme **toute première livraison**, avant le reste du domaine EDIT.
+
+**Changement v0.5** : domaine AUTH précisé — les deux méthodes de connexion à Mistral (flux navigateur IA4dev *et* configuration standard par clé API Continue) DOIVENT coexister sans exclusivité (REQ-AUTH-070/080). Correction d'un défaut de formatage dans la table AUTH (v0.3/0.4).
 
 Convention de mots-clés (RFC 2119) : **DOIT/SHALL** = exigence obligatoire ; **DEVRAIT/SHOULD** = recommandé, dérogation justifiable ; **PEUT/MAY** = optionnel.
 
@@ -138,9 +140,13 @@ Portée de la notion « lecture » vs « écriture » (précisée le 2026-09-04)
 
 #### 3.2.4 Domaine AUTH — Authentification IA4dev
 
-| ID | Exigence | Priorité |
-|---|---|---|
 Contexte : `extensions/cli` n'a plus de flux de login navigateur — le hub/WorkOS a été retiré par l'upstream en juillet 2026 (commit *"login flow retired after acquisition"*), remplacé par une saisie manuelle de clé API dans `src/onboarding.ts` (`~/.continue/config.yaml`). Il n'y a donc rien à démonter côté auth ; le flux IA4dev est une addition neuve, pas un remplacement.
+
+**Précision (2026-09-04)** : les deux méthodes de connexion à Mistral (via IA4dev) DOIVENT coexister, sans exclusivité :
+- **Méthode « Mistral Code »** : flux navigateur + bearer token (REQ-AUTH-010 à 060 ci-dessous).
+- **Méthode « branchement normal Continue »** : configuration directe d'un provider dans `config.yaml`/onboarding (clé API saisie manuellement, déjà héritée gratuitement de `core/llm/` — voir REQ-AUTH-070).
+
+L'utilisateur DOIT pouvoir utiliser l'une, l'autre, ou les deux (ex. IA4dev pour un usage courant, une clé API directe pour un environnement CI/scripté).
 
 | ID | Exigence | Priorité |
 |---|---|---|
@@ -149,8 +155,10 @@ Contexte : `extensions/cli` n'a plus de flux de login navigateur — le hub/Work
 | REQ-AUTH-030 | Le système DOIT démarrer un serveur HTTP local (port dynamique ou fixe, cf. TBD-6) avant l'ouverture du navigateur, recevoir le bearer token en paramètre de la requête de callback, puis arrêter le serveur — sans intervention manuelle de copier-coller. | Haute |
 | REQ-AUTH-031 | Le serveur local DOIT expirer (timeout) après un délai défini (ex. 5 minutes) si aucun callback n'est reçu, avec message d'erreur explicite dans le TUI. | Moyenne |
 | REQ-AUTH-040 | Le système DOIT stocker le bearer token de façon sécurisée sur disque (permissions restrictives, ex. `0600`, dans le répertoire de config utilisateur — pas de `SecretStorage` VS Code, non applicable en CLI). | Haute |
-| REQ-AUTH-050 | Une commande `logout` DOIT supprimer le bearer token stocké localement. | Moyenne |
+| REQ-AUTH-050 | Une commande `logout` DOIT supprimer le bearer token stocké localement, sans affecter une éventuelle clé API configurée par la méthode REQ-AUTH-070. | Moyenne |
 | REQ-AUTH-060 | Après authentification IA4dev, le système NE DOIT PLUS émettre d'appel réseau résiduel vers un domaine `*.continue.dev`. | Haute |
+| REQ-AUTH-070 | Le système DOIT continuer à accepter la configuration standard d'un provider Mistral (ou tout autre) via `config.yaml`/onboarding par clé API (`core/llm/`), indépendamment du flux IA4dev — aucune modification ne DOIT rendre ce chemin inaccessible ou secondaire. | Haute |
+| REQ-AUTH-080 | Si les deux méthodes sont configurées simultanément, le système DOIT permettre à l'utilisateur de choisir explicitement laquelle utiliser (pas de résolution silencieuse/ambiguë entre les deux). | Moyenne |
 
 ### 3.3 Exigences non-fonctionnelles
 
@@ -179,6 +187,7 @@ Contexte : `extensions/cli` n'a plus de flux de login navigateur — le hub/Work
 | REQ-NFR-060 | Test automatisé répété 20x sur fichier de test dédié | Non vérifié |
 | REQ-SKILL-010, 020, 030 | Test manuel : dépôt d'un `SKILL.md`, vérification de détection sur nouvelle session | Non vérifié |
 | REQ-AUTH-010, 020, 030, 031, 060 | Test manuel du flux `cn login --ia4dev` + capture réseau (absence de trafic `*.continue.dev`) + test du timeout serveur local | Non vérifié |
+| REQ-AUTH-070, 080 | Test manuel : configuration d'une clé API Mistral directe sans passer par `login --ia4dev` → fonctionne ; les deux méthodes configurées simultanément → sélection explicite proposée, pas de résolution silencieuse | Non vérifié |
 
 ---
 
