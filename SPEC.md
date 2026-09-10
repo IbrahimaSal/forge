@@ -4,7 +4,7 @@
 | | |
 |---|---|
 | **Document** | SRS-IA4DEV-CODE-001 |
-| **Version** | 0.5 (draft) |
+| **Version** | 0.8 (draft) |
 | **Statut** | Brouillon — aucune implémentation ne démarre avant approbation |
 | **Norme de référence** | ISO/IEC/IEEE 29148:2018 (succède à IEEE 830-1998) |
 
@@ -13,6 +13,12 @@
 **Changement v0.4** : ajout REQ-EDIT-100/101/102/110 (permissions `Read`/`Edit`/`MultiEdit` + liste blanche de commandes shell en lecture seule — `git status`/`show`/`log`/`diff`, `ls`, `cat`, etc. — en `allow` par défaut, restreint au repo courant, fail-safe sur ambiguïté) et désignation comme **toute première livraison**, avant le reste du domaine EDIT.
 
 **Changement v0.5** : domaine AUTH précisé — les deux méthodes de connexion à Mistral (flux navigateur IA4dev *et* configuration standard par clé API Continue) DOIVENT coexister sans exclusivité (REQ-AUTH-070/080). Correction d'un défaut de formatage dans la table AUTH (v0.3/0.4).
+
+**Changement v0.6** : ajout de la section 7.5 — constat d'architecture sur le multi-agents/sous-agents (investigation du 2026-09-09), en lien avec l'orientation "Harness" (7.1).
+
+**Changement v0.7** : formalisation du constat de 7.5 en domaine REQ-AGENT (3.2.5), positionné Phase 3 (hors ordre de livraison Phase 1 de la section 6, sauf décision contraire).
+
+**Changement v0.8** : ajout REQ-AGENT-060/061/062 — échelle unifiée d'effort de raisonnement par sous-agent, traduite par provider via une table de capacité, sur le modèle de `PROVIDER_TOOL_SUPPORT` existant. Décision issue de la comparaison Claude/OpenAI/Mistral/Gemini du 2026-09-10 et du prior art LiteLLM.
 
 Convention de mots-clés (RFC 2119) : **DOIT/SHALL** = exigence obligatoire ; **DEVRAIT/SHOULD** = recommandé, dérogation justifiable ; **PEUT/MAY** = optionnel.
 
@@ -42,6 +48,8 @@ Aucun autre IDE n'est couvert. La distribution publique (marketplace) est hors p
 | `multiEdit` | Outil agent Continue de type search/replace exact (`old_string`/`new_string`) |
 | Skill | Unité d'instructions chargée à la demande par le modèle (fichier `SKILL.md`) |
 | Workflow | Séquence orchestrée d'étapes (skills et/ou tools) avec état partagé |
+| Sous-agent | Session enfant isolée (modèle, permissions, outils, historique propres), lancée via l'outil `Subagent` depuis une session principale |
+| Effort | Niveau de profondeur de raisonnement demandé au modèle pour une invocation donnée, exprimé sur une échelle unifiée (`none/minimal/low/medium/high/xhigh/max`) indépendante du provider sous-jacent |
 | IA4dev | Infrastructure/offre de l'utilisateur, backend d'authentification existant |
 | TBD | To Be Determined — exigence non encore figée, trackée en Annexe A |
 
@@ -52,7 +60,7 @@ Aucun autre IDE n'est couvert. La distribution publique (marketplace) est hors p
 - Documentation Continue : télémétrie, indexation codebase.
 
 ### 1.5 Vue d'ensemble du document
-Section 2 décrit le produit globalement. Section 3 liste les exigences vérifiables individuellement, numérotées par domaine (EDIT, SKILL, WKF, AUTH, NFR). Section 4 fournit la matrice de traçabilité exigence → critère de vérification. Annexe A liste les points TBD bloquants.
+Section 2 décrit le produit globalement. Section 3 liste les exigences vérifiables individuellement, numérotées par domaine (EDIT, SKILL, WKF, AUTH, AGENT, NFR). Section 4 fournit la matrice de traçabilité exigence → critère de vérification. Annexe A liste les points TBD bloquants.
 
 ---
 
@@ -160,6 +168,29 @@ L'utilisateur DOIT pouvoir utiliser l'une, l'autre, ou les deux (ex. IA4dev pour
 | REQ-AUTH-070 | Le système DOIT continuer à accepter la configuration standard d'un provider Mistral (ou tout autre) via `config.yaml`/onboarding par clé API (`core/llm/`), indépendamment du flux IA4dev — aucune modification ne DOIT rendre ce chemin inaccessible ou secondaire. | Haute |
 | REQ-AUTH-080 | Si les deux méthodes sont configurées simultanément, le système DOIT permettre à l'utilisateur de choisir explicitement laquelle utiliser (pas de résolution silencieuse/ambiguë entre les deux). | Moyenne |
 
+#### 3.2.5 Domaine AGENT — Sous-agents dédiés
+
+Contexte : une brique `Subagent` existe déjà à l'état beta dans `extensions/cli/src/subagent/` (flag `--beta-subagent-tool`), incluant l'exécution récursive de `streamChatResponse()` pour une session enfant et la sélection de modèle par sous-agent (`modelsByRole.subagent`, `core/config/yaml/loadYaml.ts:334-335`) — acquis réutilisés tels quels. L'investigation du 2026-09-09 (cf. 7.5) a identifié un risque bloquant (mutation d'état global non réentrante entre sessions enfants concurrentes) et l'absence de restriction d'outils par sous-agent, par comparaison avec le modèle de Claude Code (agents typés par capacité : ex. un agent `Explore` en lecture seule, distinct d'un agent `general-purpose` à accès complet). **Domaine positionné en Phase 3** (cf. 1.2, 7.1) : formalisé ici en exigences vérifiables, mais non inclus dans l'ordre de livraison Phase 1 de la section 6 sauf décision contraire.
+
+| ID | Exigence | Priorité |
+|---|---|---|
+| REQ-AGENT-010 | Le système DOIT fournir un outil `Subagent` capable de lancer une session enfant isolée, en réutilisant le mécanisme existant (`extensions/cli/src/subagent/executor.ts`, appel récursif à `streamChatResponse()`) plutôt qu'une réécriture. | Haute |
+| REQ-AGENT-020 | L'état propre à une invocation de sous-agent (politique de permissions, system message, historique de chat) DOIT être isolé via un contexte explicite passé en paramètre à l'exécution, et NE DOIT PAS être porté par la mutation de singletons partagés (`TOOL_PERMISSIONS`, `services.systemMessage.getSystemMessage`, `chatHistorySvc.isReady` — actuellement mutés dans `executor.ts:81-112`). | Haute |
+| REQ-AGENT-021 | Plusieurs invocations de l'outil `Subagent` au sein d'un même tour (déjà exécutées en parallèle par le mécanisme générique de `streamChatResponse.helpers.ts:477-638`) DOIVENT produire un résultat correct pour chaque session enfant, sans interférence entre elles. Non vérifiable avant REQ-AGENT-020. | Haute |
+| REQ-AGENT-030 | Le système DOIT permettre de restreindre, par sous-agent, la liste des outils accessibles (allow-list explicite), en remplacement de la politique `allow` sur `*` actuellement forcée pour toute session enfant (`executor.ts:78-89`). | Haute |
+| REQ-AGENT-031 | Le système DOIT fournir au moins un type de sous-agent prédéfini en lecture seule (ex. `explore`), sans accès aux outils d'écriture (`Edit`/`MultiEdit`/`Write`/commandes shell mutantes), sur le modèle de l'agent `Explore` de Claude Code. | Haute |
+| REQ-AGENT-032 | La définition d'un type de sous-agent (nom, description, modèle, liste d'outils autorisée) DEVRAIT être exprimée de façon déclarative et cohérente avec la convention de configuration existante (`modelsByRole.subagent`), plutôt que d'introduire un nouveau format. | Moyenne |
+| REQ-AGENT-040 | Le système PEUT exposer, pour un sous-agent d'exploration, un paramètre de profondeur/portée de recherche (équivalent de "quick"/"medium"/"very thorough"), sur le modèle de l'agent `Explore` de Claude Code. | Basse |
+| REQ-AGENT-050 | *(Sans objet tel que spécifié ici — un mode d'exécution non bloquant pour l'outil `Subagent` (notification à la complétion plutôt qu'attente synchrone de la boucle parente) est envisagé, mais son recouvrement avec le domaine WKF n'est pas tranché ; cf. question ouverte en 7.5. Reporté à une future révision.)* | — |
+
+**Effort de raisonnement par sous-agent** (décision du 2026-09-10) : chaque provider expose un mécanisme d'effort de raisonnement différent et incompatible — Claude/OpenAI (récents) une échelle graduée par label, Mistral un switch binaire sur 2 modèles seulement, Gemini un budget de tokens (2.5) ou une échelle par label (3.x), et une partie des modèles n'expose aucun contrôle. Prior art vérifié : LiteLLM unifie déjà ceci via une échelle unique traduite par backend (passthrough natif, conversion en budget de tokens, ou collapse binaire selon le provider). Le fork adopte le même principe plutôt que d'inventer un mécanisme propre.
+
+| ID | Exigence | Priorité |
+|---|---|---|
+| REQ-AGENT-060 | Le système DOIT exposer une échelle unifiée d'effort de raisonnement (`none/minimal/low/medium/high/xhigh/max`), indépendante du provider, configurable par sous-agent (en complément du choix de modèle de REQ-AGENT-032). | Haute |
+| REQ-AGENT-061 | Le système DOIT traduire cette échelle vers le mécanisme natif de chaque provider/modèle : passthrough direct (ex. Claude, OpenAI récents, Gemini 3.x), conversion en budget de tokens explicite (ex. Gemini 2.5, modèles Qwen servis via Ollama/vLLM), ou réduction à un sous-ensemble compatible (ex. Mistral : `none`→`none`, tout le reste→`high`). | Haute |
+| REQ-AGENT-062 | Le système DOIT maintenir une table de capacité par modèle (sur le modèle de `PROVIDER_TOOL_SUPPORT` déjà existant dans `core/llm/toolSupport.ts` pour le tool-calling) déterminant si et comment l'effort s'applique. Pour un modèle sans aucun contrôle de raisonnement documenté, le paramètre d'effort DOIT être silencieusement ignoré (no-op) plutôt que de provoquer une erreur. | Haute |
+
 ### 3.3 Exigences non-fonctionnelles
 
 | ID | Exigence | Catégorie |
@@ -188,6 +219,12 @@ L'utilisateur DOIT pouvoir utiliser l'une, l'autre, ou les deux (ex. IA4dev pour
 | REQ-SKILL-010, 020, 030 | Test manuel : dépôt d'un `SKILL.md`, vérification de détection sur nouvelle session | Non vérifié |
 | REQ-AUTH-010, 020, 030, 031, 060 | Test manuel du flux `cn login --ia4dev` + capture réseau (absence de trafic `*.continue.dev`) + test du timeout serveur local | Non vérifié |
 | REQ-AUTH-070, 080 | Test manuel : configuration d'une clé API Mistral directe sans passer par `login --ia4dev` → fonctionne ; les deux méthodes configurées simultanément → sélection explicite proposée, pas de résolution silencieuse | Non vérifié |
+| REQ-AGENT-010 | Revue de code : l'outil `Subagent` réutilise `streamChatResponse()` sans duplication de logique | Non vérifié |
+| REQ-AGENT-020, 021 | Test d'intégration : deux invocations `Subagent` concurrentes dans un même tour → chaque session enfant conserve son propre system message/permissions/historique, aucune valeur de l'une ne fuit dans l'autre | Non vérifié |
+| REQ-AGENT-030, 031 | Test d'intégration : sous-agent de type `explore` invoqué → tentative d'appel `Edit`/`Write` refusée par la policy du sous-agent | Non vérifié |
+| REQ-AGENT-032 | Revue de config : définition d'un type de sous-agent lisible dans le même format que `modelsByRole` | Non vérifié |
+| REQ-AGENT-060, 061 | Test d'intégration : un même niveau d'effort configuré (ex. `high`) produit l'appel natif attendu selon le modèle cible (passthrough label, budget de tokens, ou collapse Mistral) | Non vérifié |
+| REQ-AGENT-062 | Test d'intégration : invocation avec un modèle sans contrôle de raisonnement documenté → requête envoyée sans erreur, paramètre d'effort absent de l'appel | Non vérifié |
 
 ---
 
@@ -227,6 +264,7 @@ Domaines EDIT, SKILL, WKF : aucun blocant, peuvent démarrer immédiatement.
 2. Domaine SKILL — activation quasi gratuite de l'existant. Prêt à démarrer.
 3. Domaine WKF — le plus structurant. Prêt à démarrer.
 4. Domaine AUTH — en attente de la résolution de TBD-6 ; peut être mené en parallèle des trois autres dès que résolu.
+5. Domaine AGENT (Phase 3, hors ordre Phase 1 ci-dessus) — en cas de démarrage anticipé, REQ-AGENT-020 (isolation d'état) est un prérequis strict à REQ-AGENT-021 (fan-out parallèle correct) et REQ-AGENT-030/031 (restriction d'outils).
 
 ---
 
@@ -247,3 +285,27 @@ Au-delà de livrer UN harnais fixe, envisager un écosystème permettant à l'ut
 - Qu'est-ce qui rend un harnais mesurablement meilleur qu'un autre (métriques, evals) ?
 - L'agnosticisme au modèle doit-il être tiré dans la Phase 1 dès maintenant (probablement peu coûteux via `core/llm/`), ou rester strictement Phase 3 ?
 - À quoi ressemble concrètement "aider l'utilisateur à construire son harnais" — un outil de scaffolding (`cn harness init`), un format de composition déclaratif, un marketplace de briques (skills/tools/permissions) ?
+
+### 7.5 Multi-agents / sous-agents : constat d'architecture (investigation du 2026-09-09)
+
+**Formalisé en domaine REQ-AGENT, cf. 3.2.5.** Section conservée pour la trace de l'investigation ; les décisions actées ci-dessous ne sont plus des questions ouvertes.
+
+Objectif visé : se rapprocher du modèle de performance de Claude Code CLI (fan-out d'agents isolés pour l'exploration de code et tâches assimilables — revue de PR, détection de breaking changes, couverture de tests, vérification de sécurité). Investigation menée sur l'état actuel de `extensions/cli` et `core/`, aucune implémentation démarrée.
+
+**Acquis (déjà présents dans le fork, aucun travail requis)** :
+- Exécution parallèle générique des tool calls d'un même tour : les appels approuvés sont lancés concurremment puis attendus via `Promise.all` (`extensions/cli/src/stream/streamChatResponse.helpers.ts:477-638`), la vérification des permissions restant séquentielle (fail-safe). Mécanisme équivalent à celui de Claude Code pour les tool_use multiples dans un tour.
+- Un tool `Subagent` existe déjà à l'état beta (`--beta-subagent-tool`), qui relance `streamChatResponse()` de façon récursive pour une session enfant isolée (historique de chat frais) — `extensions/cli/src/subagent/executor.ts`.
+- Sélection de modèle par sous-agent déjà supportée : plusieurs modèles peuvent porter le rôle `subagent` (`modelsByRole.subagent`, `core/config/yaml/loadYaml.ts:334-335`), chacun sélectionnable par nom via `subagent_name` (`extensions/cli/src/subagent/get-agents.ts`). Permet nativement un modèle rapide/économique pour l'exploration et un modèle plus fort pour la planification, sans travail supplémentaire.
+
+**Écarts identifiés par rapport à Claude Code** :
+- **Risque bloquant — état partagé muté globalement, non réentrant.** `executor.ts:81-112` mute des singletons partagés (`TOOL_PERMISSIONS`, `services.systemMessage.getSystemMessage`, `chatHistorySvc.isReady`) et les restaure dans un `finally` commun. Le tool `Subagent` étant un tool comme un autre, plusieurs appels `Subagent` dans un même tour s'exécutent déjà concurremment via le mécanisme générique ci-dessus (`Promise.all`) — sans qu'aucun garde-fou n'empêche la race condition. Un fan-out parallèle de sous-agents (le principal levier de performance recherché) est donc atteignable en émettant simplement plusieurs tool calls, mais produirait aujourd'hui un comportement incorrect (état d'un agent écrasé par un autre) plutôt qu'un gain de vitesse. Point à traiter en priorité avant tout autre travail de ce domaine.
+- Aucune restriction d'outils par sous-agent : `executor.ts:78-89` force une politique `allow` sur `*` pour la durée de la session enfant (commenté "allow all tools for now"). Contrairement à Claude Code, tout sous-agent reçoit l'intégralité des tools — impact à la fois sécurité (portée d'action non restreinte) et perf perçue (schéma de tools envoyé au modèle plus large que nécessaire). **Pattern cible confirmé empiriquement** (introspection des agents Claude Code, 2026-09-09) : Claude Code type ses agents par capacité, pas seulement par prompt — un agent `Explore` dédié à la recherche de code a accès à tous les outils *sauf* Edit/Write/NotebookEdit/Agent (lecture seule, retire l'outil du jeu disponible plutôt que de compter sur une instruction), avec un paramètre explicite de profondeur de recherche ("quick"/"medium"/"very thorough") ; un agent `general-purpose` distinct, avec accès complet en écriture, est réservé aux tâches qui doivent réellement modifier des fichiers. C'est le modèle à reproduire pour le sous-agent du fork : une liste d'outils par type de sous-agent (ex. `explore` = lecture seule, `implement` = accès complet), pas un binaire tout-ou-rien.
+- Exécution strictement bloquante : `extensions/cli/src/tools/subagent.ts:81-99` attend (`await`) la résolution complète de la session enfant avant de rendre la main à la boucle parente ; aucun mode arrière-plan/notification à la Claude Code n'existe pour libérer le tour parent pendant qu'un sous-agent tourne. Écart moins critique que le point précédent pour la performance brute (throughput), plus pertinent pour l'UX de workflows longs.
+
+**Décisions actées lors de la formalisation (→ 3.2.5)** :
+- Isolation d'état : contexte explicite injecté en paramètre (permissions, system message, historique de chat), pas de mutation de singletons partagés → REQ-AGENT-020.
+- Restriction d'outils : allow-list par type de sous-agent, exprimée de façon déclarative cohérente avec `modelsByRole.subagent` plutôt qu'un nouveau format → REQ-AGENT-030/031/032.
+- Domaine formalisé à part entière (`AGENT`), pas comme extension de WKF.
+
+**Question restée ouverte** :
+- Le mode arrière-plan (sous-agent non bloquant + notification à la complétion) est-il dans le périmètre d'une future révision du domaine AGENT, ou différé après le domaine WKF (recouvrement fonctionnel possible avec l'orchestration de workflows) ? → REQ-AGENT-050 marquée sans objet dans l'attente de cette décision.
